@@ -117,7 +117,7 @@ void MainWindow::setupUi()
         limits->addWidget(spin);
         return spin;
     };
-    ui.timeout = addSpin(QStringLiteral("Таймаут, с"), 10, 3600, 300);
+    ui.timeout = addSpin(QStringLiteral("Таймаут, с"), 10, 3600, 1800);
     ui.tokens = addSpin(QStringLiteral("Токены ответа"), 512, 65536, 12000);
     ui.reviews = addSpin(QStringLiteral("Проверки"), 1, 30, 6);
     ui.pmTurns = addSpin(QStringLiteral("Ходы PM"), 1, 100, 24);
@@ -481,7 +481,12 @@ void MainWindow::loadSettings()
     ui.pmModel->setCurrentText(settings.value("pm_model", QStringLiteral("qwen/qwen3.8-27b")).toString());
     ui.criticModel->setCurrentText(settings.value("critic_model", QStringLiteral("qwen/qwen3.8-27b")).toString());
     ui.apiKey->setText(qEnvironmentVariable("LM_STUDIO_API_KEY"));
-    ui.timeout->setValue(settings.value("timeout", 300).toInt());
+    int timeout = settings.value("timeout", 1800).toInt();
+    if (!settings.value("timeout_defaults_v2", false).toBool() && timeout == 300)
+    {
+        timeout = 1800;
+    }
+    ui.timeout->setValue(timeout);
     ui.tokens->setValue(settings.value("tokens", 12000).toInt());
     ui.reviews->setValue(settings.value("reviews", 6).toInt());
     ui.pmTurns->setValue(settings.value("pm_turns", 24).toInt());
@@ -496,6 +501,7 @@ void MainWindow::saveSettings()
     settings.setValue("pm_model", ui.pmModel->currentText());
     settings.setValue("critic_model", ui.criticModel->currentText());
     settings.setValue("timeout", ui.timeout->value());
+    settings.setValue("timeout_defaults_v2", true);
     settings.setValue("tokens", ui.tokens->value());
     settings.setValue("reviews", ui.reviews->value());
     settings.setValue("pm_turns", ui.pmTurns->value());

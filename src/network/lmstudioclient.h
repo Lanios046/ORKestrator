@@ -17,7 +17,7 @@ struct Configuration
     QString apiKey;
     QString pmModel;
     QString criticModel;
-    int timeoutMs{300000};
+    int timeoutMs{1800000};
     int maxTokens{12000};
     int maxPmTurns{24};
     int maxReviews{6};

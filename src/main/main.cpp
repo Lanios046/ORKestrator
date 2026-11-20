@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFont>
+#include <QIcon>
 #include <QPalette>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -62,6 +63,7 @@ int main(int argc, char *argv[])
     {
         qWarning() << error.what();
     }
+    app.setWindowIcon(QIcon(QStringLiteral(":/icons/orkestrator.png")));
     client::setupApplicationStyle(app);
     client::MainWindow window;
     window.show();

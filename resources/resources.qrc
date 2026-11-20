@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="orkestrator.png">icons/orkestrator.png</file>
+    </qresource>
+</RCC>

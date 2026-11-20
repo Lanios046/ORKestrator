@@ -1,0 +1,2 @@
+#pragma code_page(65001)
+1 ICON "@ORKESTRATOR_ICON_PATH@"
