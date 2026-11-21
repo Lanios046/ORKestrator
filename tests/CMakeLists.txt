@@ -1,6 +1,11 @@
 add_executable(orchestration_tests orchestration_tests.cpp fakelmstudioserver.h)
 target_link_libraries(orchestration_tests PRIVATE orkestrator_core Qt6::Test)
 add_test(NAME orchestration_tests COMMAND orchestration_tests)
+add_executable(process_fixture process_fixture.cpp)
+target_link_libraries(process_fixture PRIVATE Qt6::Core)
+add_dependencies(orchestration_tests process_fixture)
+target_compile_definitions(orchestration_tests PRIVATE
+    ORKESTRATOR_PROCESS_FIXTURE="$<TARGET_FILE:process_fixture>")
 
 add_executable(gui_tests gui_tests.cpp fakelmstudioserver.h
     ../src/main/mainwindow.h ../src/main/mainwindow.cpp

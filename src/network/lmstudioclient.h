@@ -17,10 +17,16 @@ struct Configuration
     QString apiKey;
     QString pmModel;
     QString criticModel;
+    QString developerModel;
+    QString developerCriticModel;
+    QString censorModel;
+    QString workspace;
     int timeoutMs{1800000};
-    int maxTokens{12000};
+    int maxTokens{65536};
     int maxPmTurns{24};
     int maxReviews{6};
+    int maxAgentTurns{256};
+    int commandTimeoutMs{1800000};
     bool structuredOutput{true};
 };
 

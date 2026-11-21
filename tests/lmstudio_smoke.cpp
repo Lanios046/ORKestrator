@@ -2,8 +2,6 @@
 #include "saving/sessionstore.h"
 
 #include <QCoreApplication>
-#include <QDir>
-#include <QJsonDocument>
 #include <QTextStream>
 #include <QTimer>
 
@@ -12,28 +10,26 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName("ORKestratorSmoke");
     const auto arguments = app.arguments();
-    if (arguments.size() < 3)
+    if (arguments.size() != 4)
     {
-        QTextStream(stderr) << "Usage: lmstudio_smoke <model-id> <output-directory>\n";
+        QTextStream(stderr) << "Usage: lmstudio_smoke <model-id> <session-output-directory> <workspace>\n";
         return 2;
     }
     orchestrator::Configuration config;
-    config.pmModel = arguments.at(1);
-    config.criticModel = arguments.at(1);
-    config.maxReviews = 3;
-    config.maxPmTurns = 6;
+    config.pmModel = config.criticModel = config.developerModel = config.developerCriticModel = config.censorModel = arguments.at(1);
+    config.workspace = arguments.at(3);
     config.apiKey = qEnvironmentVariable("LM_STUDIO_API_KEY");
+    config.maxReviews = 3;
     orchestrator::Orchestrator workflow;
     QObject::connect(&workflow, &orchestrator::Orchestrator::eventOccurred, &app, [](const QString &text) { QTextStream(stdout) << text << Qt::endl; });
     QObject::connect(&workflow, &orchestrator::Orchestrator::questionsReady, &app, [&workflow](const QJsonArray &questions, const QString &) {
         QJsonObject answers;
         for (const auto &value : questions)
         {
-            answers.insert(
-                value.toObject().value("id").toString(),
-                QStringLiteral("Согласен с минимальным вариантом. Консоль Windows, UTF-8 TXT, одна строка на задачу, без хранения данных между запусками; "
-                               "добавление и просмотр задач, без удаления и редактирования. Готовность: после добавления задача отображается в списке; "
-                               "пустой ввод не принимается. Остальное не знаю — зафиксируй допущения."));
+            answers.insert(value.toObject().value("id").toString(),
+                           QStringLiteral("Учебный минимум: Python 3, консольный список задач без сторонних зависимостей. "
+                                          "Добавление и просмотр непустых строк, без сохранения между запусками. "
+                                          "Нужны реальные файлы и запуск unittest. Остальное не знаю — зафиксируй допущения."));
         }
         QTimer::singleShot(0, &workflow, [&workflow, answers]() {
             QString error;
@@ -41,15 +37,12 @@ int main(int argc, char *argv[])
         });
     });
     QObject::connect(&workflow, &orchestrator::Orchestrator::changed, &app, [&]() {
-        const auto snapshot = workflow.snapshot();
-        if (!snapshot.value("id").toString().isEmpty())
+        QString error;
+        if (!orchestrator::SessionStore::save(workflow.snapshot(), workflow.markdown(), arguments.at(2), error))
         {
-            QString error;
-            if (!orchestrator::SessionStore::save(snapshot, workflow.markdown(), arguments.at(2), error))
-            {
-                QTextStream(stderr) << error << Qt::endl;
-                app.exit(3);
-            }
+            QTextStream(stderr) << error << Qt::endl;
+            app.exit(3);
+            return;
         }
         if (!workflow.active())
         {
@@ -57,13 +50,9 @@ int main(int argc, char *argv[])
         }
     });
     QTimer::singleShot(0, &workflow, [&]() {
-        workflow.start(QStringLiteral("Нужен простой список задач. Помоги уточнить требования и составить декомпозицию. "
-                                      "Это учебный MVP одного разработчика, без внешних библиотек и сервера."),
+        workflow.start(QStringLiteral("Реализовать учебный консольный список задач на Python: добавление и просмотр. "
+                                      "Нужны код, тесты и проверка запуска в выбранной рабочей папке."),
                        config);
-    });
-    QTimer::singleShot(900000, &app, [&]() {
-        workflow.stop();
-        app.exit(4);
     });
     return app.exec();
 }

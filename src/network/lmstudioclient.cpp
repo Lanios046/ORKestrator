@@ -171,7 +171,8 @@ void LmStudioClient::request(const QString &path, const QJsonObject &body, bool 
         const auto choice = choices.first().toObject();
         if (choice.value("finish_reason").toString() == "length")
         {
-            emit failed(QStringLiteral("Ответ обрезан по лимиту токенов. Увеличьте лимит и запустите задачу заново."));
+            emit failed(
+                QStringLiteral("Ответ обрезан по лимиту токенов. Увеличьте «Токены ответа» и нажмите «Повторить запрос»: контексты и ответы сохранятся."));
             return;
         }
         const auto content = choice.value("message").toObject().value("content");

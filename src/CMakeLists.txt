@@ -3,6 +3,7 @@ add_library(orkestrator_core STATIC
     orchestration/protocol.h orchestration/protocol.cpp
     orchestration/orchestrator.h orchestration/orchestrator.cpp
     saving/sessionstore.h saving/sessionstore.cpp
+    orchestration/taskexecutor.h orchestration/taskexecutor.cpp
 )
 target_include_directories(orkestrator_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(orkestrator_core PUBLIC Qt6::Core Qt6::Network PRIVATE spdlog::spdlog)

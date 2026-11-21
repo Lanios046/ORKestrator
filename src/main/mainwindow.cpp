@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -67,8 +68,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_orchestrator(th
 void MainWindow::setupUi()
 {
     setWindowTitle(QStringLiteral("ORKestrator — оркестр ИИ-агентов"));
-    resize(1420, 940);
-    setMinimumSize(1050, 720);
+    resize(1480, 1020);
+    setMinimumSize(1100, 800);
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(20, 16, 20, 16);
@@ -76,7 +77,7 @@ void MainWindow::setupUi()
     auto *title = new QLabel(QStringLiteral("ORKestrator"), central);
     title->setStyleSheet(QStringLiteral("font-size: 26px; font-weight: 600;"));
     layout->addWidget(title);
-    layout->addWidget(plainLabel(QStringLiteral("Этап 01  /  Менеджер проекта → уточнения → независимый критик → декомпозиция"), central));
+    layout->addWidget(plainLabel(QStringLiteral("PM → PM-критик → Разработчик ⇄ Критик разработчика → Цензор"), central));
 
     ui.connectionGroup = new QGroupBox(QStringLiteral("LM Studio"), central);
     auto *connection = new QFormLayout(ui.connectionGroup);
@@ -105,10 +106,43 @@ void MainWindow::setupUi()
     modelsRow->addWidget(ui.criticModel, 1);
     modelsRow->addWidget(ui.refreshModels);
     connection->addRow(QStringLiteral("Модели"), modelsRow);
+    auto makeModel = [this](const char *name) {
+        auto *combo = new QComboBox(ui.connectionGroup);
+        combo->setEditable(true);
+        combo->setObjectName(name);
+        return combo;
+    };
+    ui.developerModel = makeModel("developerModel");
+    ui.developerCriticModel = makeModel("developerCriticModel");
+    ui.censorModel = makeModel("censorModel");
+    auto *developmentModels = new QHBoxLayout();
+    developmentModels->addWidget(new QLabel(QStringLiteral("Разработчик")));
+    developmentModels->addWidget(ui.developerModel, 1);
+    developmentModels->addWidget(new QLabel(QStringLiteral("Критик разработчика")));
+    developmentModels->addWidget(ui.developerCriticModel, 1);
+    connection->addRow(QStringLiteral("Реализация"), developmentModels);
+    connection->addRow(QStringLiteral("Цензор"), ui.censorModel);
+    auto *workspaceRow = new QHBoxLayout();
+    ui.workspace = new QLineEdit(ui.connectionGroup);
+    ui.workspace->setObjectName("workspacePath");
+    ui.workspace->setPlaceholderText(QStringLiteral("Папка проекта: здесь разработчик изменяет файлы и запускает проверки"));
+    auto *browse = new QPushButton(QStringLiteral("Выбрать…"), ui.connectionGroup);
+    workspaceRow->addWidget(ui.workspace, 1);
+    workspaceRow->addWidget(browse);
+    connect(browse, &QPushButton::clicked, this, [this]() {
+        const auto path = QFileDialog::getExistingDirectory(this, QStringLiteral("Рабочая папка проекта"), ui.workspace->text());
+        if (!path.isEmpty())
+        {
+            ui.workspace->setText(path);
+        }
+    });
+    connection->addRow(QStringLiteral("Рабочая папка"), workspaceRow);
     layout->addWidget(ui.connectionGroup);
 
     ui.limits = new QGroupBox(QStringLiteral("Параметры генерации"), central);
-    auto *limits = new QHBoxLayout(ui.limits);
+    auto *limitsLayout = new QVBoxLayout(ui.limits);
+    auto *limits = new QHBoxLayout();
+    limitsLayout->addLayout(limits);
     auto addSpin = [limits, this](const QString &caption, int minimum, int maximum, int value) {
         auto *spin = new QSpinBox(ui.limits);
         spin->setRange(minimum, maximum);
@@ -118,7 +152,7 @@ void MainWindow::setupUi()
         return spin;
     };
     ui.timeout = addSpin(QStringLiteral("Таймаут, с"), 10, 3600, 1800);
-    ui.tokens = addSpin(QStringLiteral("Токены ответа"), 512, 65536, 12000);
+    ui.tokens = addSpin(QStringLiteral("Токены ответа"), 512, 262144, 65536);
     ui.reviews = addSpin(QStringLiteral("Проверки"), 1, 30, 6);
     ui.pmTurns = addSpin(QStringLiteral("Ходы PM"), 1, 100, 24);
     ui.structuredOutput = new QCheckBox(QStringLiteral("JSON schema"), ui.limits);
@@ -126,7 +160,23 @@ void MainWindow::setupUi()
     ui.structuredOutput->setToolTip(QStringLiteral("Отключите, если модель не поддерживает Structured Output. Проверка JSON останется включена."));
     limits->addWidget(ui.structuredOutput);
     limits->addStretch();
+    auto *executionLimits = new QHBoxLayout();
+    executionLimits->addWidget(new QLabel(QStringLiteral("Запросы каждой роли, кроме PM")));
+    ui.agentTurns = new QSpinBox(ui.limits);
+    ui.agentTurns->setRange(1, 4096);
+    ui.agentTurns->setValue(256);
+    executionLimits->addWidget(ui.agentTurns);
+    executionLimits->addWidget(new QLabel(QStringLiteral("Таймаут команды, с")));
+    ui.commandTimeout = new QSpinBox(ui.limits);
+    ui.commandTimeout->setRange(10, 7200);
+    ui.commandTimeout->setValue(1800);
+    executionLimits->addWidget(ui.commandTimeout);
+    executionLimits->addStretch();
+    limitsLayout->addLayout(executionLimits);
+    ui.stage = plainLabel(QStringLiteral("Этап реализации ещё не выбран"));
+    ui.stage->setObjectName("stageLabel");
     layout->addWidget(ui.limits);
+    layout->addWidget(ui.stage);
 
     auto *splitter = new QSplitter(Qt::Horizontal, central);
     ui.inputTabs = new QTabWidget(splitter);
@@ -146,7 +196,7 @@ void MainWindow::setupUi()
     ui.questions = new QScrollArea(questionsPage);
     ui.questions->setWidgetResizable(true);
     questionsLayout->addWidget(ui.questions, 1);
-    ui.submit = new QPushButton(QStringLiteral("Отправить ответы PM"), questionsPage);
+    ui.submit = new QPushButton(QStringLiteral("Отправить ответы"), questionsPage);
     ui.submit->setObjectName("submitAnswers");
     questionsLayout->addWidget(ui.submit);
     ui.inputTabs->addTab(questionsPage, QStringLiteral("Опросник"));
@@ -155,13 +205,21 @@ void MainWindow::setupUi()
     ui.outputTabs = new QTabWidget(splitter);
     ui.plan = markdownView(ui.outputTabs);
     ui.plan->setObjectName("decompositionView");
+    ui.implementation = markdownView(ui.outputTabs);
+    ui.implementation->setObjectName("implementationView");
+    ui.terminal = new QPlainTextEdit(ui.outputTabs);
+    ui.terminal->setReadOnly(true);
+    ui.terminal->setObjectName("commandOutput");
+    ui.terminal->setMaximumBlockCount(6000);
     ui.reviewsView = markdownView(ui.outputTabs);
     ui.reviewsView->setObjectName("reviewsView");
     ui.log = new QPlainTextEdit(ui.outputTabs);
     ui.log->setReadOnly(true);
     ui.log->setMaximumBlockCount(3000);
     ui.outputTabs->addTab(ui.plan, QStringLiteral("Декомпозиция"));
-    ui.outputTabs->addTab(ui.reviewsView, QStringLiteral("Критик"));
+    ui.outputTabs->addTab(ui.implementation, QStringLiteral("Реализация"));
+    ui.outputTabs->addTab(ui.reviewsView, QStringLiteral("Ревью"));
+    ui.outputTabs->addTab(ui.terminal, QStringLiteral("Команды"));
     ui.outputTabs->addTab(ui.log, QStringLiteral("Журнал"));
     splitter->addWidget(ui.inputTabs);
     splitter->addWidget(ui.outputTabs);
@@ -171,7 +229,7 @@ void MainWindow::setupUi()
     layout->addWidget(splitter, 1);
 
     auto *buttons = new QHBoxLayout();
-    ui.start = new QPushButton(QStringLiteral("Начать декомпозицию"), central);
+    ui.start = new QPushButton(QStringLiteral("Запустить оркестр"), central);
     ui.start->setObjectName("startButton");
     ui.start->setDefault(true);
     ui.start->setMinimumHeight(36);
@@ -183,6 +241,9 @@ void MainWindow::setupUi()
     ui.exportJson = new QPushButton(QStringLiteral("Экспорт сессии JSON…"), central);
     buttons->addWidget(ui.start);
     buttons->addWidget(ui.stop);
+    ui.retry = new QPushButton(QStringLiteral("Повторить запрос"), central);
+    ui.retry->setObjectName("retryButton");
+    buttons->addWidget(ui.retry);
     buttons->addStretch();
     buttons->addWidget(ui.exportMarkdown);
     buttons->addWidget(ui.exportJson);
@@ -211,9 +272,9 @@ void MainWindow::setupUi()
     auto *helpMenu = menuBar()->addMenu(QStringLiteral("Справка"));
     helpMenu->addAction(QStringLiteral("О программе"), this, [this]() {
         QMessageBox::about(
-            this, QStringLiteral("ORKestrator 0.1.0"),
-            QStringLiteral("Этап 1: PM уточняет задачу и создает план. Независимый критик одобряет его или возвращает на доработку.\n\n"
-                           "Сессии агентов — отдельные истории сообщений API. Их можно вести на одной модели. Выполнение подзадач в этот этап не входит."));
+            this, QStringLiteral("ORKestrator 0.2.0"),
+            QStringLiteral("Пять ролей: PM, PM-критик, разработчик, критик разработчика и цензор.\n\n"
+                           "У каждой роли постоянная история в рамках задачи. Разработчик изменяет файлы и запускает проверки в выбранном проекте."));
     });
 }
 
@@ -221,6 +282,7 @@ void MainWindow::setupConnections()
 {
     connect(ui.refreshModels, &QPushButton::clicked, this, &MainWindow::refreshModels);
     connect(ui.start, &QPushButton::clicked, this, &MainWindow::startTask);
+    connect(ui.retry, &QPushButton::clicked, this, &MainWindow::retryRequest);
     connect(ui.stop, &QPushButton::clicked, &m_orchestrator, &orchestrator::Orchestrator::stop);
     connect(ui.submit, &QPushButton::clicked, this, &MainWindow::submitAnswers);
     connect(ui.exportMarkdown, &QPushButton::clicked, this, [this]() { exportResult(false); });
@@ -243,7 +305,7 @@ void MainWindow::setupConnections()
     });
     connect(&m_modelsClient, &orchestrator::LmStudioClient::modelsReady, this, [this](const QStringList &models) {
         ui.refreshModels->setEnabled(!m_orchestrator.active());
-        for (auto *combo : {ui.pmModel, ui.criticModel})
+        for (auto *combo : {ui.pmModel, ui.criticModel, ui.developerModel, ui.developerCriticModel, ui.censorModel})
         {
             const auto current = combo->currentText();
             combo->clear();
@@ -270,16 +332,29 @@ void MainWindow::setupConnections()
         ui.plan->setMarkdown(plan);
         ui.outputTabs->setCurrentIndex(0);
     });
-    connect(&m_orchestrator, &orchestrator::Orchestrator::reviewReady, this, [this](const QJsonObject &review, int round) {
-        m_reviewsMarkdown += QStringLiteral("# Проверка %1\n\n%2\n\n---\n\n").arg(round).arg(orchestrator::reviewMarkdown(review));
+    connect(&m_orchestrator, &orchestrator::Orchestrator::roleReviewReady, this, [this](const QString &role, const QJsonObject &review, int round) {
+        m_reviewsMarkdown += QStringLiteral("# %1 — проверка %2\n\n%3\n\n---\n\n").arg(role).arg(round).arg(orchestrator::reviewMarkdown(review));
         ui.reviewsView->setMarkdown(m_reviewsMarkdown);
+        ui.outputTabs->setCurrentIndex(2);
+    });
+    connect(&m_orchestrator, &orchestrator::Orchestrator::implementationChanged, this, [this](const QString &result) {
+        ui.implementation->setMarkdown(result);
         ui.outputTabs->setCurrentIndex(1);
+    });
+    connect(&m_orchestrator, &orchestrator::Orchestrator::stageChanged, this,
+            [this](int index, int count, const QString &title) { ui.stage->setText(QStringLiteral("Этап %1/%2: %3").arg(index).arg(count).arg(title)); });
+    connect(&m_orchestrator, &orchestrator::Orchestrator::toolResultsReady, this, [this](const QJsonArray &results) {
+        for (const auto &value : results)
+        {
+            const auto result = value.toObject();
+            ui.terminal->appendPlainText(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Indented)));
+        }
     });
     connect(&m_orchestrator, &orchestrator::Orchestrator::eventOccurred, this,
             [this](const QString &text) { ui.log->appendPlainText(QDateTime::currentDateTime().toString("HH:mm:ss") + QStringLiteral("  ") + text); });
     connect(&m_orchestrator, &orchestrator::Orchestrator::changed, this, &MainWindow::autosave);
     connect(&m_orchestrator, &orchestrator::Orchestrator::failed, this,
-            [this](const QString &error) { QMessageBox::warning(this, QStringLiteral("Не удалось завершить декомпозицию"), error); });
+            [this](const QString &error) { QMessageBox::warning(this, QStringLiteral("Не удалось завершить задачу"), error); });
 }
 
 orchestrator::Configuration MainWindow::configuration() const
@@ -289,6 +364,12 @@ orchestrator::Configuration MainWindow::configuration() const
     config.apiKey = ui.apiKey->text();
     config.pmModel = ui.pmModel->currentText().trimmed();
     config.criticModel = ui.criticModel->currentText().trimmed();
+    config.developerModel = ui.developerModel->currentText().trimmed();
+    config.developerCriticModel = ui.developerCriticModel->currentText().trimmed();
+    config.censorModel = ui.censorModel->currentText().trimmed();
+    config.workspace = ui.workspace->text().trimmed().isEmpty() ? QString{} : QFileInfo(ui.workspace->text().trimmed()).canonicalFilePath();
+    config.maxAgentTurns = ui.agentTurns->value();
+    config.commandTimeoutMs = ui.commandTimeout->value() * 1000;
     config.timeoutMs = ui.timeout->value() * 1000;
     config.maxTokens = ui.tokens->value();
     config.maxReviews = ui.reviews->value();
@@ -316,15 +397,19 @@ void MainWindow::startTask()
         return;
     }
     const auto config = configuration();
-    if (config.pmModel.isEmpty() || config.criticModel.isEmpty() || ui.task->toPlainText().trimmed().isEmpty())
+    if (config.pmModel.isEmpty() || config.criticModel.isEmpty() || config.developerModel.isEmpty() || config.developerCriticModel.isEmpty() ||
+        config.censorModel.isEmpty() || config.workspace.isEmpty() || ui.task->toPlainText().trimmed().isEmpty())
     {
-        QMessageBox::information(this, QStringLiteral("Задача"), QStringLiteral("Введите задачу и выберите модели PM и критика."));
+        QMessageBox::information(this, QStringLiteral("Задача"), QStringLiteral("Введите задачу, выберите рабочую папку и модели пяти ролей."));
         return;
     }
     m_modelsClient.cancel();
     saveSettings();
     clearQuestions();
     ui.plan->clear();
+    ui.implementation->clear();
+    ui.terminal->clear();
+    ui.stage->setText(QStringLiteral("Планирование задачи"));
     ui.reviewsView->clear();
     m_reviewsMarkdown.clear();
     ui.log->clear();
@@ -333,6 +418,16 @@ void MainWindow::startTask()
     m_orchestrator.start(ui.task->toPlainText(), config);
 }
 
+void MainWindow::retryRequest()
+{
+    m_modelsClient.cancel();
+    saveSettings();
+    QString error;
+    if (!m_orchestrator.retry(configuration(), error))
+    {
+        QMessageBox::information(this, QStringLiteral("Повтор запроса"), error);
+    }
+}
 void MainWindow::clearQuestions()
 {
     m_inputs.clear();
@@ -410,7 +505,7 @@ void MainWindow::updateState(orchestrator::Orchestrator::State state)
 {
     using State = orchestrator::Orchestrator::State;
     const bool active = m_orchestrator.active();
-    const bool generating = state == State::PmWorking || state == State::CriticWorking;
+    const bool generating = active && state != State::AwaitingAnswers;
     ui.state->setText(orchestrator::Orchestrator::stateName(state));
     ui.progress->setRange(0, generating ? 0 : 1);
     ui.progress->setValue(state == State::Completed ? 1 : 0);
@@ -421,14 +516,16 @@ void MainWindow::updateState(orchestrator::Orchestrator::State state)
     ui.loadTask->setEnabled(!active);
     ui.start->setEnabled(!active && !ui.task->toPlainText().trimmed().isEmpty());
     ui.stop->setEnabled(active);
+    ui.retry->setEnabled(m_orchestrator.canRetry());
     ui.submit->setEnabled(state == State::AwaitingAnswers);
     ui.questions->setEnabled(state == State::AwaitingAnswers);
     ui.exportMarkdown->setEnabled(!m_orchestrator.snapshot().value("decomposition").toString().isEmpty());
     ui.exportJson->setEnabled(!m_orchestrator.snapshot().value("id").toString().isEmpty());
-    ui.outputTabs->setTabText(0, state == State::Completed ? QStringLiteral("Декомпозиция — одобрено") : QStringLiteral("Декомпозиция — черновик"));
+    ui.outputTabs->setTabText(0, m_orchestrator.snapshot().value("plan_approved").toBool() ? QStringLiteral("План — одобрен")
+                                                                                           : QStringLiteral("Декомпозиция — черновик"));
     if (state == State::Completed)
     {
-        ui.outputTabs->setCurrentIndex(0);
+        ui.outputTabs->setCurrentIndex(1);
     }
 }
 
@@ -459,8 +556,8 @@ void MainWindow::autosave()
 
 void MainWindow::exportResult(bool json)
 {
-    const auto path = QFileDialog::getSaveFileName(this, json ? QStringLiteral("Экспорт сессии") : QStringLiteral("Сохранить декомпозицию"),
-                                                   json ? QStringLiteral("session.json") : QStringLiteral("decomposition.md"),
+    const auto path = QFileDialog::getSaveFileName(this, json ? QStringLiteral("Экспорт сессии") : QStringLiteral("Сохранить отчёт о задаче"),
+                                                   json ? QStringLiteral("session.json") : QStringLiteral("task-report.md"),
                                                    json ? QStringLiteral("JSON (*.json)") : QStringLiteral("Markdown (*.md)"));
     if (path.isEmpty())
     {
@@ -480,6 +577,12 @@ void MainWindow::loadSettings()
     ui.server->setText(settings.value("server", QStringLiteral("http://127.0.0.1:51325")).toString());
     ui.pmModel->setCurrentText(settings.value("pm_model", QStringLiteral("qwen/qwen3.8-27b")).toString());
     ui.criticModel->setCurrentText(settings.value("critic_model", QStringLiteral("qwen/qwen3.8-27b")).toString());
+    ui.developerModel->setCurrentText(settings.value("developer_model", ui.pmModel->currentText()).toString());
+    ui.developerCriticModel->setCurrentText(settings.value("developer_critic_model", ui.criticModel->currentText()).toString());
+    ui.censorModel->setCurrentText(settings.value("censor_model", ui.criticModel->currentText()).toString());
+    ui.workspace->setText(settings.value("workspace").toString());
+    ui.agentTurns->setValue(settings.value("agent_turns", 256).toInt());
+    ui.commandTimeout->setValue(settings.value("command_timeout", 1800).toInt());
     ui.apiKey->setText(qEnvironmentVariable("LM_STUDIO_API_KEY"));
     int timeout = settings.value("timeout", 1800).toInt();
     if (!settings.value("timeout_defaults_v2", false).toBool() && timeout == 300)
@@ -487,7 +590,8 @@ void MainWindow::loadSettings()
         timeout = 1800;
     }
     ui.timeout->setValue(timeout);
-    ui.tokens->setValue(settings.value("tokens", 12000).toInt());
+    const int tokens = settings.value("tokens", 65536).toInt();
+    ui.tokens->setValue(!settings.value("token_defaults_v2", false).toBool() && tokens == 12000 ? 65536 : tokens);
     ui.reviews->setValue(settings.value("reviews", 6).toInt());
     ui.pmTurns->setValue(settings.value("pm_turns", 24).toInt());
     ui.structuredOutput->setChecked(settings.value("structured_output", true).toBool());
@@ -500,6 +604,13 @@ void MainWindow::saveSettings()
     settings.setValue("server", ui.server->text());
     settings.setValue("pm_model", ui.pmModel->currentText());
     settings.setValue("critic_model", ui.criticModel->currentText());
+    settings.setValue("developer_model", ui.developerModel->currentText());
+    settings.setValue("developer_critic_model", ui.developerCriticModel->currentText());
+    settings.setValue("censor_model", ui.censorModel->currentText());
+    settings.setValue("workspace", ui.workspace->text());
+    settings.setValue("agent_turns", ui.agentTurns->value());
+    settings.setValue("command_timeout", ui.commandTimeout->value());
+    settings.setValue("token_defaults_v2", true);
     settings.setValue("timeout", ui.timeout->value());
     settings.setValue("timeout_defaults_v2", true);
     settings.setValue("tokens", ui.tokens->value());

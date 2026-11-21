@@ -109,31 +109,75 @@ class FakeLmStudioServer final : public QTcpServer
     }
 };
 
+inline QJsonArray mockStages(int count = 1)
+{
+    QJsonArray stages;
+    for (int i = 1; i <= count; ++i)
+    {
+        QJsonArray dependencies;
+        if (i > 1)
+        {
+            dependencies.append(QStringLiteral("S%1").arg(i - 1));
+        }
+        stages.append(QJsonObject{{"id", QStringLiteral("S%1").arg(i)},
+                                  {"title", QStringLiteral("Stage %1").arg(i)},
+                                  {"goal", "Implement stage"},
+                                  {"acceptance_criteria", QJsonArray{"Result is verified"}},
+                                  {"depends_on", dependencies}});
+    }
+    return stages;
+}
 inline QJsonObject questions(const QString &id = QStringLiteral("scope"))
 {
     return {{"status", "questions"},
             {"summary", "Уточните объем"},
-            {"decomposition", "# Предварительный план"},
+            {"decomposition", "# Черновик"},
+            {"stages", QJsonArray{}},
             {"questions", QJsonArray{QJsonObject{
                               {"id", id}, {"text", "Какой объем?"}, {"reason", "Определяет границы"}, {"options", QJsonArray{"MVP", "Полный продукт"}}}}}};
 }
-
-inline QJsonObject ready(const QString &plan = QStringLiteral("# План\n\nT1. Сделать. Готово: проверено."))
+inline QJsonObject ready(const QString &plan = QStringLiteral("# Готовый план"), const QJsonArray &stages = mockStages())
 {
-    return {{"status", "ready"}, {"summary", "План готов"}, {"decomposition", plan}, {"questions", QJsonArray{}}};
+    return {{"status", "ready"}, {"summary", "План готов"}, {"decomposition", plan}, {"questions", QJsonArray{}}, {"stages", stages}};
 }
-
 inline QJsonObject approved()
 {
-    return {{"verdict", "approved"}, {"summary", "Требования покрыты, замечаний нет"}, {"issues", QJsonArray{}}};
+    return {{"status", "ready"}, {"verdict", "approved"}, {"summary", "Требования покрыты"}, {"issues", QJsonArray{}}, {"actions", QJsonArray{}}};
 }
-
 inline QJsonObject revise()
 {
-    return {{"verdict", "revise"},
-            {"summary", "Не хватает проверки результата"},
-            {"issues", QJsonArray{QJsonObject{{"severity", "blocking"},
-                                              {"problem", "Нет проверки"},
-                                              {"reason", "CRITIC_PRIVATE_MARKER: нельзя оценить результат"},
-                                              {"requested_change", "Добавить приемку"}}}}};
+    return {{"status", "ready"},
+            {"verdict", "revise"},
+            {"summary", "Нужна проверка"},
+            {"actions", QJsonArray{}},
+            {"issues",
+             QJsonArray{QJsonObject{
+                 {"severity", "blocking"}, {"problem", "Нет проверки"}, {"reason", "Результат не подтвержден"}, {"requested_change", "Добавить проверку"}}}}};
+}
+inline QJsonObject censorApproved()
+{
+    auto result = approved();
+    result.insert("return_to", "none");
+    result.insert("stage_id", "");
+    return result;
+}
+inline QJsonObject censorRevise(const QString &target, const QString &stage)
+{
+    auto result = revise();
+    result.insert("return_to", target);
+    result.insert("stage_id", stage);
+    return result;
+}
+inline QJsonObject developerReady(const QString &report = QStringLiteral("Этап реализован"))
+{
+    return {{"status", "ready"}, {"summary", "Готово"}, {"result", report}, {"actions", QJsonArray{}}, {"questions", QJsonArray{}}};
+}
+inline QJsonObject tool(const QString &type, const QString &path = {}, const QString &content = {}, const QString &program = {},
+                        const QJsonArray &arguments = {})
+{
+    return {{"type", type}, {"path", path}, {"content", content}, {"program", program}, {"arguments", arguments}};
+}
+inline QJsonObject developerActions(const QJsonArray &actions)
+{
+    return {{"status", "actions"}, {"summary", "Операции"}, {"result", ""}, {"actions", actions}, {"questions", QJsonArray{}}};
 }
