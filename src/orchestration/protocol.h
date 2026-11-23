@@ -20,6 +20,7 @@ inline constexpr std::array<AgentRole, 5> agentRoles{AgentRole::Pm, AgentRole::P
 QString agentId(AgentRole role);
 QString agentName(AgentRole role);
 QString agentPrompt(AgentRole role);
+QString developerDirectives();
 QJsonObject agentSchema(AgentRole role);
 QJsonObject message(const QString &role, const QString &content);
 QString jsonText(const QJsonObject &object);

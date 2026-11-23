@@ -161,7 +161,8 @@ QJsonArray Orchestrator::checks() const
 }
 QJsonObject Orchestrator::context() const
 {
-    return {{"task", m_task},
+    return {{"developer_directives", developerDirectives()},
+            {"task", m_task},
             {"answers", m_answers},
             {"decomposition", m_plan},
             {"stages", m_stages},
@@ -560,6 +561,7 @@ QJsonObject Orchestrator::snapshot() const
             {"active_agent", agentId(m_role)},
             {"approved", m_state == State::Completed},
             {"plan_approved", m_planApproved},
+            {"developer_directives", developerDirectives()},
             {"task", m_task},
             {"decomposition", m_plan},
             {"implementation", m_implementation},
