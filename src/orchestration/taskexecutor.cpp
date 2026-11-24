@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -16,6 +17,27 @@ namespace
 {
 constexpr qsizetype fileLimit = 256 * 1024;
 constexpr qsizetype outputLimit = 64 * 1024;
+
+QJsonObject directorySnapshot(const QDir &directory)
+{
+    QJsonArray entries;
+    const auto files = directory.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden, QDir::DirsFirst | QDir::Name);
+    bool truncated = false;
+    for (const auto &file : files)
+    {
+        if (file.fileName() == ".git")
+        {
+            continue;
+        }
+        if (entries.size() == 200)
+        {
+            truncated = true;
+            break;
+        }
+        entries.append(QJsonObject{{"name", file.fileName()}, {"directory", file.isDir()}, {"bytes", file.size()}});
+    }
+    return {{"entries", entries}, {"truncated", truncated}};
+}
 
 bool inside(const QString &path, const QString &root)
 {
@@ -64,6 +86,30 @@ QString TaskExecutor::workspace() const
     return m_workspace;
 }
 
+QString TaskExecutor::observationFingerprint(const QJsonObject &action) const
+{
+    QString error;
+    const auto path = resolvePath(action.value("path").toString(), error);
+    if (path.isEmpty())
+    {
+        return {};
+    }
+    const auto type = action.value("type").toString();
+    if (type == "read_file" || type == "write_file")
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || file.size() > fileLimit)
+        {
+            return {};
+        }
+        return QString::fromLatin1(hash(file.readAll()));
+    }
+    if (type == "list_files" && QFileInfo(path).isDir())
+    {
+        return QString::fromLatin1(hash(QJsonDocument(directorySnapshot(QDir(path))).toJson(QJsonDocument::Compact)));
+    }
+    return {};
+}
 QString TaskExecutor::resolvePath(const QString &relative, QString &error) const
 {
     const auto normalized = QDir::fromNativeSeparators(relative);
@@ -179,24 +225,9 @@ QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
             result.insert("error", "Directory does not exist");
             return result;
         }
-        QJsonArray entries;
-        const auto files = directory.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden, QDir::DirsFirst | QDir::Name);
-        bool truncated = false;
-        for (const auto &file : files)
-        {
-            if (file.fileName() == ".git")
-            {
-                continue;
-            }
-            if (entries.size() == 200)
-            {
-                truncated = true;
-                break;
-            }
-            entries.append(QJsonObject{{"name", file.fileName()}, {"directory", file.isDir()}, {"bytes", file.size()}});
-        }
-        result.insert("entries", entries);
-        result.insert("truncated", truncated);
+        const auto snapshot = directorySnapshot(directory);
+        result.insert("entries", snapshot.value("entries"));
+        result.insert("truncated", snapshot.value("truncated"));
     }
     else if (type == "read_file")
     {
@@ -234,6 +265,7 @@ QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
             result.insert("error", "File exceeds the 256 KiB write limit.");
             return result;
         }
+        bool changed = true;
         if (QFileInfo::exists(path))
         {
             QFile current(path);
@@ -242,7 +274,9 @@ QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
                 result.insert("error", current.errorString());
                 return result;
             }
-            if (!m_observed.contains(path) || hash(current.readAll()) != m_observed.value(path))
+            const auto previous = hash(current.readAll());
+            changed = previous != hash(content);
+            if (!m_observed.contains(path) || previous != m_observed.value(path))
             {
                 result.insert("error", "Read the current file before overwriting it; it is unread or changed since the last read.");
                 return result;
@@ -262,6 +296,7 @@ QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
         m_observed.insert(path, hash(content));
         result.insert("sha256", QString::fromLatin1(hash(content)));
         result.insert("bytes", content.size());
+        result.insert("changed", changed);
     }
     else
     {

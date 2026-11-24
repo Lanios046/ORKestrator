@@ -58,6 +58,8 @@ class MainWindow final : public QMainWindow
         QComboBox *developerModel{nullptr};
         QComboBox *developerCriticModel{nullptr};
         QComboBox *censorModel{nullptr};
+        QComboBox *researcherModel{nullptr};
+        QComboBox *diagnosticianModel{nullptr};
         QLineEdit *workspace{nullptr};
         QPushButton *refreshModels{nullptr};
         QGroupBox *limits{nullptr};
@@ -67,7 +69,14 @@ class MainWindow final : public QMainWindow
         QSpinBox *pmTurns{nullptr};
         QSpinBox *agentTurns{nullptr};
         QSpinBox *commandTimeout{nullptr};
+        QSpinBox *researchTurns{nullptr};
+        QSpinBox *diagnosticTurns{nullptr};
+        QSpinBox *diagnosticRuns{nullptr};
         QCheckBox *structuredOutput{nullptr};
+        QComboBox *samplingProfile{nullptr};
+        QComboBox *reasoningMode{nullptr};
+        QSpinBox *serviceTokens{nullptr};
+        QSpinBox *reasoningCharacters{nullptr};
         QPlainTextEdit *task{nullptr};
         QPushButton *loadTask{nullptr};
         QPushButton *start{nullptr};
@@ -84,6 +93,7 @@ class MainWindow final : public QMainWindow
         QTextBrowser *implementation{nullptr};
         QPlainTextEdit *terminal{nullptr};
         QTextBrowser *reviewsView{nullptr};
+        QTextBrowser *specialists{nullptr};
         QPlainTextEdit *log{nullptr};
         QPushButton *exportMarkdown{nullptr};
         QPushButton *exportJson{nullptr};
@@ -93,7 +103,7 @@ class MainWindow final : public QMainWindow
     orchestrator::Orchestrator m_orchestrator;
     orchestrator::LmStudioClient m_modelsClient;
     QMap<QString, QPlainTextEdit *> m_inputs;
-    QString m_reviewsMarkdown;
+    QString m_reviewsMarkdown, m_specialistsMarkdown;
     bool m_saveErrorShown{false};
 };
 } // namespace client

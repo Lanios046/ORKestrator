@@ -21,6 +21,7 @@ class TaskExecutor final : public QObject
     void execute(const QJsonArray &actions, bool canWrite, int timeoutMs);
     void cancel();
     QString workspace() const;
+    QString observationFingerprint(const QJsonObject &action) const;
 
   signals:
     void finished(const QJsonArray &results);

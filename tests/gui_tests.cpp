@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextBrowser>
@@ -43,7 +44,12 @@ class GuiTests final : public QObject
         settings.setValue("server", server.baseUrl().toString());
         settings.setValue("pm_model", "test-pm");
         settings.setValue("critic_model", "test-critic");
+        settings.setValue("researcher_model", "test-researcher");
+        settings.setValue("diagnostician_model", "test-diagnostician");
         settings.setValue("workspace", workspace.path());
+        settings.setValue("reviews", 6);
+        settings.setValue("pm_turns", 24);
+        settings.setValue("agent_turns", 256);
         settings.sync();
         server.enqueue(questions());
         server.enqueue(ready("# Готовый план\n\nT1. Согласовать результат."));
@@ -64,6 +70,17 @@ class GuiTests final : public QObject
         QVERIFY(window.findChild<QComboBox *>("developerModel"));
         QVERIFY(window.findChild<QComboBox *>("developerCriticModel"));
         QVERIFY(window.findChild<QComboBox *>("censorModel"));
+        QVERIFY(window.findChild<QComboBox *>("researcherModel"));
+        QVERIFY(window.findChild<QComboBox *>("diagnosticianModel"));
+        QVERIFY(window.findChild<QTextBrowser *>("specialistsView"));
+        QVERIFY(window.findChild<QComboBox *>("samplingProfile"));
+        QVERIFY(window.findChild<QComboBox *>("reasoningMode"));
+        QCOMPARE(window.findChild<QSpinBox *>("serviceTokens")->value(), 8192);
+        QCOMPARE(window.findChild<QSpinBox *>("reasoningCharacters")->value(), 24000);
+        QCOMPARE(window.findChild<QSpinBox *>("reviewLimit")->value(), 10000);
+        QCOMPARE(window.findChild<QSpinBox *>("pmTurnLimit")->value(), 10000);
+        QCOMPARE(window.findChild<QSpinBox *>("agentTurnLimit")->value(), 100000);
+        QCOMPARE(window.findChild<QSpinBox *>("researchTurns")->maximum(), 1000000);
         QVERIFY(window.findChild<QLineEdit *>("workspacePath"));
         QVERIFY(window.findChild<QPushButton *>("retryButton"));
         QTRY_COMPARE(server.requests.size(), 1);
@@ -96,6 +113,7 @@ class GuiTests final : public QObject
         QVERIFY(window.findChild<QTextBrowser *>("implementationView")->toPlainText().contains("Готовая реализация"));
         auto *reviews = window.findChild<QTextBrowser *>("reviewsView");
         QVERIFY(reviews->toPlainText().contains("Одобрено"));
+        QVERIFY(window.findChild<QTextBrowser *>("specialistsView")->toPlainText().contains("README.md"));
         QVERIFY(window.grab().save(settingsDirectory.filePath("mainwindow.png")));
         if (!artifacts.isEmpty())
         {

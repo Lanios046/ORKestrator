@@ -13,15 +13,19 @@ enum class AgentRole
     PmCritic,
     Developer,
     DeveloperCritic,
-    Censor
+    Censor,
+    Researcher,
+    Diagnostician
 };
-inline constexpr std::array<AgentRole, 5> agentRoles{AgentRole::Pm, AgentRole::PmCritic, AgentRole::Developer, AgentRole::DeveloperCritic, AgentRole::Censor};
+inline constexpr std::array<AgentRole, 7> agentRoles{AgentRole::Pm,     AgentRole::PmCritic,   AgentRole::Developer,    AgentRole::DeveloperCritic,
+                                                     AgentRole::Censor, AgentRole::Researcher, AgentRole::Diagnostician};
 
 QString agentId(AgentRole role);
 QString agentName(AgentRole role);
 QString agentPrompt(AgentRole role);
 QString developerDirectives();
 QJsonObject agentSchema(AgentRole role);
+QJsonObject agentRequestSchema(AgentRole role, const QJsonArray &history);
 QJsonObject message(const QString &role, const QString &content);
 QString jsonText(const QJsonObject &object);
 bool parseAgentResponse(const QString &content, AgentRole role, QJsonObject &result, QString &error);
