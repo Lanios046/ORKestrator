@@ -64,18 +64,11 @@ bool PipelineExecutor::start(const Pipeline &graph, const QString &task, const o
                 return false;
             break;
         }
-    stop();
-    qDeleteAll(m_executors);
-    m_executors.clear();
+    clear();
     m_graph = graph;
     m_connection = connection;
     m_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     m_task = task.trimmed();
-    m_contexts.clear();
-    m_results = {};
-    m_events = {};
-    m_visits = {};
-    m_automaticSteps = 0;
     log(QStringLiteral("Новая задача %1. Агентов: %2.").arg(m_id).arg(graph.agents.size()));
     visit(graph.start, {}, {});
     return true;
@@ -211,10 +204,14 @@ void PipelineExecutor::received(const QString &content)
                 .arg(agent->toolLimit)
                 .arg(actions.size()));
         QString reason;
+        bool routeNegative = false;
         if (m_operations + actions.size() > agent->toolLimit)
             reason = QStringLiteral("Превышен лимит операций: %1 + %2 > %3.").arg(m_operations).arg(actions.size()).arg(agent->toolLimit);
         else if (++m_repeats[signature] >= 3)
+        {
             reason = QStringLiteral("Один и тот же пакет операций запрошен в третий раз за посещение.");
+            routeNegative = !m_graph.next(m_current, false).isEmpty();
+        }
         if (!reason.isEmpty())
         {
             QStringList rejected;
@@ -222,7 +219,13 @@ void PipelineExecutor::received(const QString &content)
                 rejected.append(orchestrator::TaskExecutor::describeAction(action.toObject()));
             reason += QStringLiteral(" Отклонённый пакет: %1.").arg(rejected.join(", "));
             m_contexts[m_current].append(message("user", jsonText({{"event", "tool_results"}, {"error", reason}, {"executed", false}})));
-            complete({{"summary", reason}, {"content", reason}, {"partial", true}}, false);
+            if (routeNegative)
+            {
+                const auto handoff = reason + "\n" + result.value("summary").toString();
+                complete({{"status", "ready"}, {"summary", reason}, {"content", handoff}, {agent->resultField, agent->negative}, {"actions", QJsonArray{}}}, true);
+            }
+            else
+                complete({{"summary", reason}, {"content", reason}, {"partial", true}}, false);
             return;
         }
         QString error;
@@ -349,7 +352,8 @@ void PipelineExecutor::stop()
 }
 void PipelineExecutor::clear()
 {
-    stop();
+    ++m_epoch;
+    m_client.cancel();
     qDeleteAll(m_executors);
     m_executors.clear();
     m_contexts.clear();

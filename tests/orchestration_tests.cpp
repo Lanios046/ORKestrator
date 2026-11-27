@@ -101,6 +101,45 @@ class PipelineTests final : public QObject
         QCOMPARE(runner.current(), a.id);
         QVERIFY(runner.context(b.id).isEmpty());
     }
+    void newTaskStartsWithFreshWorkerContexts()
+    {
+        const auto a = agent("A"), b = agent("B");
+        pipeline::Pipeline graph{{a, b}, {{a.id, b.id, true}}, a.id};
+        FakeLmStudioServer server;
+        server.enqueue(reply("positive", "first task handoff"));
+        server.enqueue(reply("positive", "first task result"));
+        server.enqueue(reply("positive", "second task handoff"));
+        server.enqueue(reply("positive", "second task result"));
+        orchestrator::Configuration connection;
+        connection.baseUrl = server.baseUrl();
+        pipeline::PipelineExecutor runner;
+        QString error;
+        QVERIFY(runner.start(graph, "first task", connection, error));
+        QTRY_COMPARE(runner.state(), pipeline::PipelineExecutor::State::Finished);
+        const auto firstId = runner.sessionId();
+        QVERIFY(!runner.context(b.id).isEmpty());
+
+        QVERIFY(runner.start(graph, "second task", connection, error));
+        QVERIFY(runner.sessionId() != firstId);
+        QVERIFY(runner.context(b.id).isEmpty());
+        const auto snapshot = runner.snapshot();
+        QVERIFY(snapshot.value("events").toArray().first().toObject().value("agent").toString().isEmpty());
+        QVERIFY(snapshot.value("results").toObject().isEmpty());
+        QCOMPARE(snapshot.value("visits").toArray().size(), 1);
+        QTRY_COMPARE(runner.state(), pipeline::PipelineExecutor::State::Finished);
+        QCOMPARE(server.requests.size(), 4);
+        for (const auto &request : server.requests.sliced(2))
+        {
+            const auto messages = request.value("payload").toObject().value("messages").toArray();
+            QCOMPARE(messages.size(), 2);
+            QCOMPARE(messages.first().toObject().value("role").toString(), QStringLiteral("system"));
+            const auto user = messages.last().toObject();
+            QCOMPARE(user.value("role").toString(), QStringLiteral("user"));
+            const auto content = user.value("content").toString();
+            QCOMPARE(QJsonDocument::fromJson(content.toUtf8()).object().value("task").toString(), QStringLiteral("second task"));
+            QVERIFY(!content.contains("first task"));
+        }
+    }
     void loadedSessionKeepsContextsAndDoesNotRunAutomatically()
     {
         const auto a = agent("A");
@@ -160,6 +199,54 @@ class PipelineTests final : public QObject
         QVERIFY(journal.contains("find sources"));
         QVERIFY(journal.contains(QStringLiteral("совпадений: 0")));
         QVERIFY(journal.contains(reason));
+    }
+    void repeatedToolBatchUsesNegativeEdge_data()
+    {
+        QTest::addColumn<bool>("automatic");
+        QTest::newRow("automatic") << true;
+        QTest::newRow("manual") << false;
+    }
+    void repeatedToolBatchUsesNegativeEdge()
+    {
+        QFETCH(bool, automatic);
+        auto worker = agent("Implementation");
+        worker.tools = {"list_files"};
+        worker.automatic = automatic;
+        worker.resultField = "verdict";
+        worker.negative = "blocked";
+        const auto diagnostic = agent("Diagnostics");
+        pipeline::Pipeline graph{{worker, diagnostic}, {{worker.id, diagnostic.id, false}}, worker.id};
+        FakeLmStudioServer server;
+        const QJsonArray actions{QJsonObject{{"type", "list_files"}, {"path", "."}}};
+        for (int i = 0; i < 3; ++i)
+            server.enqueue({{"status", "actions"}, {"summary", "inspecting workspace"}, {"actions", actions}});
+        server.enqueue(reply("positive"));
+        QTemporaryDir workspace;
+        orchestrator::Configuration connection;
+        connection.workspace = workspace.path();
+        connection.baseUrl = server.baseUrl();
+        pipeline::PipelineExecutor runner;
+        QString error;
+        QVERIFY(runner.start(graph, "task", connection, error));
+        if (!automatic)
+        {
+            QTRY_COMPARE(runner.state(), pipeline::PipelineExecutor::State::AwaitingChoice);
+            QCOMPARE(runner.current(), worker.id);
+            QVERIFY(runner.context(diagnostic.id).isEmpty());
+            QVERIFY(runner.advance(false, {}, error));
+        }
+        QTRY_COMPARE(runner.state(), pipeline::PipelineExecutor::State::Finished);
+        const auto visits = runner.snapshot().value("visits").toArray();
+        QCOMPARE(visits.size(), 2);
+        const auto source = visits.first().toObject();
+        QCOMPARE(source.value("tools").toArray().size(), 2);
+        const auto result = source.value("result").toObject();
+        QCOMPARE(result.value("verdict").toString(), QStringLiteral("blocked"));
+        QVERIFY(result.value("content").toString().contains("list_files"));
+        QVERIFY(result.value("content").toString().contains("inspecting workspace"));
+        const auto target = visits.last().toObject();
+        QCOMPARE(target.value("agent").toString(), diagnostic.id);
+        QCOMPARE(target.value("input").toString(), pipeline::jsonText(result));
     }
     void forbiddenToolsDoNotExecute()
     {

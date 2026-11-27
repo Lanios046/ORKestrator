@@ -177,6 +177,7 @@ void MainWindow::setupUi()
     m_result->setReadOnly(true);
     m_result->setObjectName("agentResult");
     m_log = new QPlainTextEdit(tabs);
+    m_log->setObjectName("sessionLog");
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(5000);
     tabs->addTab(resultPage, QStringLiteral("Результат агента"));
@@ -186,6 +187,7 @@ void MainWindow::setupUi()
     m_stateLabel->setWordWrap(true);
     bottomLayout->addWidget(m_stateLabel);
     m_note = new QPlainTextEdit(bottom);
+    m_note->setObjectName("transitionNote");
     m_note->setPlaceholderText(QStringLiteral("Ваши ответы, уточнения или поручение следующему агенту"));
     m_note->setMaximumHeight(70);
     bottomLayout->addWidget(m_note);
@@ -543,8 +545,6 @@ void MainWindow::startTask()
     QString failure;
     if (!m_engine.start(capture(), m_task->toPlainText(), connection(), failure))
         error(failure);
-    else
-        resetResultHistory();
 }
 void MainWindow::changeState(pipeline::PipelineExecutor::State state)
 {
@@ -565,6 +565,8 @@ void MainWindow::changeState(pipeline::PipelineExecutor::State state)
     switch (state)
     {
     case pipeline::PipelineExecutor::State::Idle:
+        m_log->clear();
+        m_note->clear();
         resetResultHistory();
         name = QStringLiteral("Готово");
         break;
