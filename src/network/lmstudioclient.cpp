@@ -106,6 +106,7 @@ void LmStudioClient::configure(const Configuration &configuration)
     m_configuration.baseUrl = normalizedBaseUrl(configuration.baseUrl);
     m_capabilitiesQueried = false;
     m_reasoningCapabilities.clear();
+    m_enabledReasoningEfforts.clear();
 }
 
 QUrl LmStudioClient::normalizedBaseUrl(QUrl url)
@@ -171,10 +172,24 @@ void LmStudioClient::fetchReasoningCapabilities(const QString &model, const QJso
                 }
                 const auto options = reasoning.toObject().value("allowed_options").toArray();
                 const bool supported = options.contains(QStringLiteral("off")) || options.contains(QStringLiteral("none"));
+                QString effort;
+                for (const auto &option : {"medium", "on", "low", "high", "minimal", "xhigh"})
+                {
+                    if (options.contains(QString::fromLatin1(option)))
+                    {
+                        effort = QString::fromLatin1(option);
+                        if (effort == "on")
+                        {
+                            effort = "medium";
+                        }
+                        break;
+                    }
+                }
                 const auto key = entry.value("key").toString();
                 if (!key.isEmpty())
                 {
                     m_reasoningCapabilities.insert(key, supported);
+                    m_enabledReasoningEfforts.insert(key, effort);
                 }
                 for (const auto &instance : entry.value("loaded_instances").toArray())
                 {
@@ -182,6 +197,7 @@ void LmStudioClient::fetchReasoningCapabilities(const QString &model, const QJso
                     if (!id.isEmpty())
                     {
                         m_reasoningCapabilities.insert(id, supported);
+                        m_enabledReasoningEfforts.insert(id, effort);
                     }
                 }
             }
@@ -203,21 +219,32 @@ void LmStudioClient::complete(const QString &model, const QJsonArray &messages, 
         fetchReasoningCapabilities(model, messages, schema, schemaName, disableReasoning);
         return;
     }
-    const bool developer = schemaName == "developer_result";
-    const bool censor = schemaName == "censor_result";
+    const bool developer = schemaName == "agent_result";
     const bool qwen36 = model.contains("qwen3.6", Qt::CaseInsensitive);
     const bool hybridQwen = qwen36 || model.contains("qwen3.8", Qt::CaseInsensitive);
-    const bool reasoningOff =
-        m_configuration.reasoningMode == ReasoningMode::Off ||
-        (m_configuration.reasoningMode == ReasoningMode::Auto && reasoningCanBeDisabled(model) && (disableReasoning || (!developer && !censor)));
+    const bool reasoningOff = m_configuration.reasoningMode == ReasoningMode::Off ||
+                              (m_configuration.reasoningMode == ReasoningMode::Auto && reasoningCanBeDisabled(model) && disableReasoning);
     const int outputLimit =
         !developer && m_configuration.maxServiceTokens > 0 ? qMin(m_configuration.maxTokens, m_configuration.maxServiceTokens) : m_configuration.maxTokens;
     m_outputTokenLimit = outputLimit;
     m_serviceResponse = !developer && m_configuration.maxServiceTokens > 0 && m_configuration.maxServiceTokens < m_configuration.maxTokens;
     QJsonObject body{{"model", model}, {"messages", messages}, {"max_tokens", outputLimit}, {"stream", true}};
+    QString reasoningEffort;
     if (reasoningOff)
     {
-        body.insert("reasoning_effort", "none");
+        reasoningEffort = "none";
+    }
+    else if (m_configuration.reasoningMode == ReasoningMode::Auto)
+    {
+        reasoningEffort = m_enabledReasoningEfforts.value(model);
+        if (reasoningEffort.isEmpty() && !m_reasoningCapabilities.contains(model) && reasoningCanBeDisabled(model))
+        {
+            reasoningEffort = "medium";
+        }
+    }
+    if (!reasoningEffort.isEmpty())
+    {
+        body.insert("reasoning_effort", reasoningEffort);
     }
     auto profile = m_configuration.samplingProfile;
     if (profile == SamplingProfile::Auto)
@@ -227,20 +254,23 @@ void LmStudioClient::complete(const QString &model, const QJsonArray &messages, 
     if (profile == SamplingProfile::QwenThinking || profile == SamplingProfile::QwenInstruct)
     {
         const bool thinking = profile == SamplingProfile::QwenThinking;
-        const bool preciseCoding = thinking && qwen36 && (developer || censor);
+        const bool preciseCoding = thinking && qwen36 && developer;
         body.insert("temperature", thinking ? (preciseCoding ? 0.6 : 1.0) : 0.7);
         body.insert("top_p", thinking ? 0.95 : 0.8);
         body.insert("top_k", 20);
         body.insert("presence_penalty", thinking ? (qwen36 && !preciseCoding ? 1.5 : 0.0) : 1.5);
         body.insert("repeat_penalty", 1.0);
     }
-    m_guardContent = schemaName != "developer_result";
+    m_guardContent = schemaName != "agent_result";
     if (m_configuration.structuredOutput)
     {
         body.insert("response_format",
                     QJsonObject{{"type", "json_schema"}, {"json_schema", QJsonObject{{"name", schemaName}, {"strict", true}, {"schema", schema}}}});
     }
-    emit generationConfigured(outputLimit, reasoningOff ? QStringLiteral("выключено (none)") : QStringLiteral("настройки сервера"));
+    const auto reasoningLabel = reasoningOff                ? QStringLiteral("выключено (none)")
+                                : reasoningEffort.isEmpty() ? QStringLiteral("настройки сервера")
+                                                            : QStringLiteral("включено (%1)").arg(reasoningEffort);
+    emit generationConfigured(outputLimit, reasoningLabel);
     request(QStringLiteral("/chat/completions"), body, false);
 }
 

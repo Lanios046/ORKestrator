@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(ORKestrator VERSION 0.2.0 LANGUAGES CXX)
+project(ORKestrator VERSION 1.0.0 LANGUAGES CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -13,6 +13,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(ORKESTRATOR_LIBS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/libs" CACHE PATH "Prebuilt third-party libraries")
 set(ORKESTRATOR_QT_ROOT "$ENV{QTDIR}" CACHE PATH "Qt 6 installation prefix")
+set(ORKESTRATOR_NODEEDITOR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/libs/nodeeditor" CACHE PATH "Optional local QtNodes source")
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(ORKESTRATOR_LIBS_VARIANT Debug)
 else()
@@ -21,7 +22,7 @@ endif()
 list(PREPEND CMAKE_PREFIX_PATH "${ORKESTRATOR_QT_ROOT}"
     "${ORKESTRATOR_LIBS_ROOT}/qt/${ORKESTRATOR_LIBS_VARIANT}"
     "${ORKESTRATOR_LIBS_ROOT}/spdlog/${ORKESTRATOR_LIBS_VARIANT}")
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network OpenGL)
 find_package(spdlog 1.14 CONFIG REQUIRED)
 
 if(MSVC)
@@ -29,14 +30,49 @@ if(MSVC)
     add_compile_definitions(NOMINMAX _CRT_NO_VA_START_VALIDATION)
 endif()
 
-add_subdirectory(src)
 include(CTest)
+set(orkestrator_build_testing "${BUILD_TESTING}")
+set(BUILD_TESTING OFF)
+set(BUILD_EXAMPLES OFF)
+set(BUILD_DOCS OFF)
+set(BUILD_SHARED_LIBS OFF)
+set(QT_NODES_DEVELOPER_DEFAULTS OFF)
+set(USE_QT6 ON)
+
+include(FetchContent)
+if(EXISTS "${ORKESTRATOR_NODEEDITOR_ROOT}/CMakeLists.txt")
+    set(orkestrator_nodes_download URL "${ORKESTRATOR_NODEEDITOR_ROOT}")
+else()
+    set(orkestrator_nodes_download
+        GIT_REPOSITORY https://github.com/paceholder/nodeeditor.git
+        GIT_TAG 904f440f42dca9c89880da744b13a1d620fcc700
+        GIT_PROGRESS TRUE
+    )
+endif()
+FetchContent_Declare(orkestrator_nodes ${orkestrator_nodes_download})
+FetchContent_MakeAvailable(orkestrator_nodes)
+set_property(DIRECTORY "${orkestrator_nodes_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+install(FILES "${orkestrator_nodes_SOURCE_DIR}/LICENSE.rst" DESTINATION licenses RENAME QtNodes-LICENSE.rst)
+
+foreach(node_group_file IN ITEMS include/QtNodes/internal/NodeGroup.hpp src/NodeGroup.cpp)
+    set(node_group_path "${orkestrator_nodes_SOURCE_DIR}/${node_group_file}")
+    file(READ "${node_group_path}" node_group_source)
+    string(REGEX REPLACE "([^A-Za-z0-9_])_id([^A-Za-z0-9_])" "\\1_groupId\\2" node_group_fixed "${node_group_source}")
+    if(NOT node_group_fixed STREQUAL node_group_source)
+        file(WRITE "${node_group_path}" "${node_group_fixed}")
+    endif()
+endforeach()
+
+set(BUILD_TESTING "${orkestrator_build_testing}")
+add_subdirectory(src)
+
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_subdirectory(tests)
 endif()
 
 install(TARGETS ORKestrator RUNTIME DESTINATION . BUNDLE DESTINATION .)
+install(FILES LICENSE DESTINATION .)
 if(WIN32)
     if(Qt6_VERSION VERSION_LESS "6.5")
         qt_generate_deploy_app_script(TARGET ORKestrator FILENAME_VARIABLE deploy_script NO_UNSUPPORTED_PLATFORM_ERROR)

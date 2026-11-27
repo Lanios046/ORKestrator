@@ -20,7 +20,9 @@ class TaskExecutor final : public QObject
     bool configure(const QString &workspace, QString &error);
     void execute(const QJsonArray &actions, bool canWrite, int timeoutMs);
     void cancel();
+    static QString describeAction(const QJsonObject &action);
     QString workspace() const;
+    QJsonObject projectContext(const QString &task) const;
     QString observationFingerprint(const QJsonObject &action) const;
 
   signals:
@@ -31,6 +33,7 @@ class TaskExecutor final : public QObject
     void next();
     void scheduleNext();
     QJsonObject fileAction(const QJsonObject &action);
+    QJsonObject searchAction(const QJsonObject &action, const QString &root) const;
     QString resolvePath(const QString &relative, QString &error) const;
     void runCommand(const QJsonObject &action);
 

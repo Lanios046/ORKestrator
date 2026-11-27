@@ -1,30 +1,28 @@
 #pragma once
-
-#include "orchestration/orchestrator.h"
+#include "pipeline/agentgraph.h"
+#include "pipeline/pipelineexecutor.h"
 
 #include <QMainWindow>
 #include <QMap>
+#include <QtNodes/DataFlowGraphicsScene>
+#include <QtNodes/GraphicsView>
 
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
-class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
-class QProgressBar;
 class QPushButton;
-class QScrollArea;
 class QSpinBox;
 class QTabWidget;
-class QTextBrowser;
+class QToolBar;
 
 namespace client
 {
 class MainWindow final : public QMainWindow
 {
     Q_OBJECT
-
   public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override = default;
@@ -34,76 +32,48 @@ class MainWindow final : public QMainWindow
 
   private:
     void setupUi();
-    void setupConnections();
-    void loadSettings();
-    void saveSettings();
-    void refreshModels();
+    void addAgent();
+    void selectAgent(QtNodes::NodeId id);
+    bool applyAgent();
+    pipeline::Pipeline capture() const;
+    void loadGraph(const pipeline::Pipeline &graph);
+    bool syncGraph();
     void startTask();
-    void retryRequest();
-    void showQuestions(const QJsonArray &questions, const QString &summary);
-    void clearQuestions();
-    void submitAnswers();
-    void updateState(orchestrator::Orchestrator::State state);
+    void changeState(pipeline::PipelineExecutor::State state);
+    void refreshRoutes();
+    void refreshContext();
+    void resetResultHistory();
+    void addVisitResult(const QString &name, const QString &time, const QJsonObject &result);
+    void savePipeline();
+    void openPipeline();
+    void saveSession();
+    void openSession();
     void autosave();
-    void exportResult(bool json);
-    orchestrator::Configuration configuration() const;
-
-    struct
-    {
-        QGroupBox *connectionGroup{nullptr};
-        QLineEdit *server{nullptr};
-        QLineEdit *apiKey{nullptr};
-        QComboBox *pmModel{nullptr};
-        QComboBox *criticModel{nullptr};
-        QComboBox *developerModel{nullptr};
-        QComboBox *developerCriticModel{nullptr};
-        QComboBox *censorModel{nullptr};
-        QComboBox *researcherModel{nullptr};
-        QComboBox *diagnosticianModel{nullptr};
-        QLineEdit *workspace{nullptr};
-        QPushButton *refreshModels{nullptr};
-        QGroupBox *limits{nullptr};
-        QSpinBox *timeout{nullptr};
-        QSpinBox *tokens{nullptr};
-        QSpinBox *reviews{nullptr};
-        QSpinBox *pmTurns{nullptr};
-        QSpinBox *agentTurns{nullptr};
-        QSpinBox *commandTimeout{nullptr};
-        QSpinBox *researchTurns{nullptr};
-        QSpinBox *diagnosticTurns{nullptr};
-        QSpinBox *diagnosticRuns{nullptr};
-        QCheckBox *structuredOutput{nullptr};
-        QComboBox *samplingProfile{nullptr};
-        QComboBox *reasoningMode{nullptr};
-        QSpinBox *serviceTokens{nullptr};
-        QSpinBox *reasoningCharacters{nullptr};
-        QPlainTextEdit *task{nullptr};
-        QPushButton *loadTask{nullptr};
-        QPushButton *start{nullptr};
-        QPushButton *stop{nullptr};
-        QPushButton *retry{nullptr};
-        QLabel *stage{nullptr};
-        QLabel *state{nullptr};
-        QProgressBar *progress{nullptr};
-        QTabWidget *inputTabs{nullptr};
-        QScrollArea *questions{nullptr};
-        QPushButton *submit{nullptr};
-        QTabWidget *outputTabs{nullptr};
-        QTextBrowser *plan{nullptr};
-        QTextBrowser *implementation{nullptr};
-        QPlainTextEdit *terminal{nullptr};
-        QTextBrowser *reviewsView{nullptr};
-        QTextBrowser *specialists{nullptr};
-        QPlainTextEdit *log{nullptr};
-        QPushButton *exportMarkdown{nullptr};
-        QPushButton *exportJson{nullptr};
-        QLabel *saveStatus{nullptr};
-    } ui;
-
-    orchestrator::Orchestrator m_orchestrator;
-    orchestrator::LmStudioClient m_modelsClient;
-    QMap<QString, QPlainTextEdit *> m_inputs;
-    QString m_reviewsMarkdown, m_specialistsMarkdown;
-    bool m_saveErrorShown{false};
+    void log(const QString &message);
+    void error(const QString &message);
+    QString dataDirectory() const;
+    orchestrator::Configuration connection() const;
+    pipeline::AgentDelegate *selected() const;
+    pipeline::AgentGraphModel *m_graph{nullptr};
+    QtNodes::DataFlowGraphicsScene *m_scene{nullptr};
+    QtNodes::GraphicsView *m_view{nullptr};
+    pipeline::PipelineExecutor m_engine;
+    orchestrator::LmStudioClient m_models;
+    QtNodes::NodeId m_selected{QtNodes::InvalidNodeId};
+    QString m_start, m_file;
+    bool m_loading{false};
+    QWidget *m_inspector{nullptr};
+    QToolBar *m_toolbar{nullptr};
+    QLineEdit *m_server{nullptr}, *m_key{nullptr}, *m_workspace{nullptr}, *m_name{nullptr};
+    QLineEdit *m_resultField{nullptr}, *m_positive{nullptr}, *m_negative{nullptr};
+    QComboBox *m_model{nullptr}, *m_thinking{nullptr}, *m_route{nullptr}, *m_resultHistory{nullptr};
+    QPlainTextEdit *m_task{nullptr}, *m_rules{nullptr}, *m_prompt{nullptr}, *m_result{nullptr};
+    QPlainTextEdit *m_context{nullptr}, *m_log{nullptr}, *m_note{nullptr};
+    QCheckBox *m_automatic{nullptr}, *m_fresh{nullptr};
+    QSpinBox *m_tokens{nullptr}, *m_timeout{nullptr}, *m_toolLimit{nullptr}, *m_commandTimeout{nullptr}, *m_reasoningBudget{nullptr};
+    QSpinBox *m_autoLimit{nullptr};
+    QMap<QString, QCheckBox *> m_tools;
+    QLabel *m_startLabel{nullptr}, *m_stateLabel{nullptr};
+    QPushButton *m_startButton{nullptr}, *m_stopButton{nullptr}, *m_repeatButton{nullptr}, *m_routeButton{nullptr}, *m_modelsButton{nullptr};
 };
-} // namespace client
+}

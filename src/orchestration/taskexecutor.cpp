@@ -6,8 +6,12 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QProcess>
+#include <QQueue>
+#include <QRegularExpression>
 #include <QSaveFile>
+#include <QSet>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 #include <QVariant>
 
@@ -86,6 +90,94 @@ QString TaskExecutor::workspace() const
     return m_workspace;
 }
 
+QJsonObject TaskExecutor::projectContext(const QString &task) const
+{
+    auto inventoryAction = QJsonObject{{"type", "find_files"}, {"path", ""}, {"pattern", "*"}};
+    const auto inventory = searchAction(inventoryAction, m_workspace);
+    QStringList candidates{"AGENTS.md", ".clang-format"};
+    static const QRegularExpression references(
+        QStringLiteral("[\\p{L}\\p{N}_./\\\\:-]+\\.(?:hpp|cpp|cxx|cmake|json|yaml|proto|txt|qml|ps1|yml|md|py|ui|h|c)\\b"),
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::UseUnicodePropertiesOption);
+    auto matches = references.globalMatch(task);
+    while (matches.hasNext() && candidates.size() < 12)
+    {
+        candidates.append(matches.next().captured());
+    }
+    candidates.append({"CMakeLists.txt", "README.md"});
+    QSet<QString> seen;
+    QJsonArray files, unavailable;
+    int remaining = 32768;
+    for (auto candidate : candidates)
+    {
+        if (files.size() >= 8 || remaining <= 0)
+        {
+            break;
+        }
+        candidate = QDir::fromNativeSeparators(candidate);
+        if (QDir::isAbsolutePath(candidate))
+        {
+            candidate = QDir(m_workspace).relativeFilePath(candidate);
+        }
+        QString error;
+        auto path = resolvePath(candidate, error);
+        if ((path.isEmpty() || !QFileInfo(path).isFile()) && !candidate.contains('/') && !candidate.contains(':'))
+        {
+            QString match;
+            for (const auto &entry : inventory.value("matches").toArray())
+            {
+                const auto relative = entry.toObject().value("path").toString();
+                if (QFileInfo(relative).fileName().compare(candidate, Qt::CaseInsensitive) == 0)
+                {
+                    if (!match.isEmpty())
+                    {
+                        match.clear();
+                        break;
+                    }
+                    match = relative;
+                }
+            }
+            if (!match.isEmpty())
+            {
+                path = resolvePath(match, error);
+            }
+        }
+        if (path.isEmpty() || !QFileInfo(path).isFile())
+        {
+            continue;
+        }
+        const auto canonical = QFileInfo(path).canonicalFilePath();
+        if (seen.contains(canonical))
+        {
+            continue;
+        }
+        seen.insert(canonical);
+        const auto relative = QDir::fromNativeSeparators(QDir(m_workspace).relativeFilePath(path));
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            unavailable.append(QJsonObject{{"path", relative}, {"error", file.errorString()}});
+            continue;
+        }
+        QTextStream stream(&file);
+        const auto content = stream.read(qMin(remaining, 8192));
+        if (content.contains(QChar::Null))
+        {
+            unavailable.append(QJsonObject{{"path", relative}, {"error", QStringLiteral("Файл не является текстом.")}});
+            continue;
+        }
+        remaining -= content.size();
+        files.append(QJsonObject{{"path", relative}, {"content", content}, {"content_truncated", !stream.atEnd()}, {"file_bytes", file.size()}});
+    }
+    return {{"workspace", m_workspace},
+            {"root", directorySnapshot(QDir(m_workspace))},
+            {"inventory", inventory},
+            {"files", files},
+            {"unavailable", unavailable},
+            {"limits", QJsonObject{{"included_files", 8}, {"characters_per_file", 8192}, {"total_characters", 32768}}},
+            {"note", QStringLiteral("Контекст собран приложением один раз. Это ограниченный обзор, а не полное исследование проекта. "
+                                    "Разработчик читает нужный код самостоятельно перед изменением.")}};
+}
+
 QString TaskExecutor::observationFingerprint(const QJsonObject &action) const
 {
     QString error;
@@ -103,6 +195,16 @@ QString TaskExecutor::observationFingerprint(const QJsonObject &action) const
             return {};
         }
         return QString::fromLatin1(hash(file.readAll()));
+    }
+    if (type == "find_files" || type == "search_text")
+    {
+        auto result = searchAction(action, path);
+        if (!result.value("success").toBool())
+        {
+            return {};
+        }
+        result.remove("path");
+        return QString::fromLatin1(hash(QJsonDocument(result).toJson(QJsonDocument::Compact)));
     }
     if (type == "list_files" && QFileInfo(path).isDir())
     {
@@ -185,6 +287,18 @@ void TaskExecutor::scheduleNext()
     });
 }
 
+QString TaskExecutor::describeAction(const QJsonObject &action)
+{
+    const auto type = action.value("type").toString();
+    const auto path = action.value("path").toString();
+    QString label = type + " " + (path.isEmpty() ? QStringLiteral(".") : path);
+    if (type == "search_text" || type == "find_files")
+        label += QStringLiteral(" «%1»").arg(action.value(type == "search_text" ? "query" : "pattern").toString());
+    else if (type == "run_command")
+        label += " " + action.value("program").toString();
+    return label;
+}
+
 void TaskExecutor::next()
 {
     if (m_index >= m_actions.size())
@@ -194,16 +308,150 @@ void TaskExecutor::next()
         return;
     }
     const auto action = m_actions.at(m_index++).toObject();
-    emit activity(QStringLiteral("%1: %2").arg(action.value("type").toString(), action.value("type").toString() == "run_command"
-                                                                                    ? action.value("program").toString()
-                                                                                    : action.value("path").toString()));
     if (action.value("type").toString() == "run_command")
     {
         runCommand(action);
         return;
     }
-    m_results.append(fileAction(action));
+    const auto result = fileAction(action);
+    m_results.append(result);
+    QString detail;
+    if (!result.value("success").toBool())
+        detail = QStringLiteral("ошибка: %1").arg(result.value("error").toString());
+    else if (result.contains("matches"))
+        detail = QStringLiteral("совпадений: %1").arg(result.value("matches").toArray().size());
+    else if (result.contains("entries"))
+        detail = QStringLiteral("элементов: %1").arg(result.value("entries").toArray().size());
+    else if (result.contains("changed"))
+        detail = QStringLiteral("%1, %2 байт")
+                     .arg(result.value("changed").toBool() ? QStringLiteral("изменён") : QStringLiteral("без изменений"))
+                     .arg(result.value("bytes").toInteger());
+    else
+        detail = QStringLiteral("прочитано символов: %1").arg(result.value("content").toString().size());
+    if (result.value("truncated").toBool())
+        detail += QStringLiteral(" (выдача ограничена)");
+    emit activity(describeAction(action) + QStringLiteral(" — ") + detail);
     scheduleNext();
+}
+
+QJsonObject TaskExecutor::searchAction(const QJsonObject &action, const QString &root) const
+{
+    const auto type = action.value("type").toString();
+    const bool filenames = type == "find_files";
+    QJsonObject result{{"type", type}, {"path", action.value("path")}, {"success", false}};
+    const auto needle = action.value(filenames ? "pattern" : "query").toString();
+    if (needle.trimmed().isEmpty() || needle.size() > 512 || !QFileInfo::exists(root))
+    {
+        result.insert("error", QStringLiteral("Нужны существующий путь и непустой pattern/query длиной до 512 символов."));
+        return result;
+    }
+    const QRegularExpression pattern(QRegularExpression::wildcardToRegularExpression(needle), QRegularExpression::CaseInsensitiveOption);
+    if (filenames && !pattern.isValid())
+    {
+        result.insert("error", QStringLiteral("Некорректная маска имени файла."));
+        return result;
+    }
+    static const QSet<QString> excluded{".git", ".svn", "node_modules", ".venv", "venv", "__pycache__", "libs", "build", "out", "dist"};
+    QQueue<QFileInfo> pending;
+    pending.enqueue(QFileInfo(root));
+    QJsonArray matches;
+    int scanned = 0, skipped = 0;
+    qsizetype bytesRead = 0;
+    bool truncated = false;
+    while (!pending.isEmpty())
+    {
+        if (scanned >= 10000 || matches.size() >= 100)
+        {
+            truncated = true;
+            break;
+        }
+        const auto entry = pending.dequeue();
+        ++scanned;
+        if (entry.isSymLink() || !inside(QDir::fromNativeSeparators(entry.canonicalFilePath()), m_workspace))
+        {
+            continue;
+        }
+        if (entry.isDir())
+        {
+            const auto children = QDir(entry.absoluteFilePath())
+                                      .entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks, QDir::DirsFirst | QDir::Name);
+            for (const auto &child : children)
+            {
+                if (child.isDir() && excluded.contains(child.fileName().toCaseFolded()))
+                {
+                    continue;
+                }
+                if (pending.size() + scanned >= 10000)
+                {
+                    truncated = true;
+                    break;
+                }
+                pending.enqueue(child);
+            }
+            continue;
+        }
+        if (!entry.isFile())
+        {
+            continue;
+        }
+        const auto relative = QDir::fromNativeSeparators(QDir(m_workspace).relativeFilePath(entry.absoluteFilePath()));
+        if (filenames)
+        {
+            if (pattern.match(entry.fileName()).hasMatch())
+            {
+                matches.append(QJsonObject{{"path", relative}, {"bytes", entry.size()}});
+            }
+            continue;
+        }
+        if (entry.size() > fileLimit)
+        {
+            ++skipped;
+            continue;
+        }
+        if (bytesRead + entry.size() > 16 * 1024 * 1024)
+        {
+            truncated = true;
+            break;
+        }
+        QFile file(entry.absoluteFilePath());
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            ++skipped;
+            continue;
+        }
+        const auto bytes = file.read(fileLimit + 1);
+        if (bytes.size() > fileLimit)
+        {
+            ++skipped;
+            continue;
+        }
+        bytesRead += bytes.size();
+        if (bytes.contains('\0'))
+        {
+            continue;
+        }
+        const auto lines = QString::fromUtf8(bytes).split('\n');
+        for (qsizetype line = 0; line < lines.size(); ++line)
+        {
+            const auto position = lines[line].indexOf(needle, 0, Qt::CaseInsensitive);
+            if (position < 0)
+            {
+                continue;
+            }
+            matches.append(QJsonObject{{"path", relative}, {"line", line + 1}, {"text", lines[line].mid(qMax(qsizetype{0}, position - 80), 240)}});
+            if (matches.size() >= 100)
+            {
+                truncated = true;
+                break;
+            }
+        }
+    }
+    result.insert("success", true);
+    result.insert("matches", matches);
+    result.insert("scanned_entries", scanned);
+    result.insert("skipped_files", skipped);
+    result.insert("truncated", truncated);
+    return result;
 }
 
 QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
@@ -217,6 +465,10 @@ QJsonObject TaskExecutor::fileAction(const QJsonObject &action)
         return result;
     }
     const auto type = action.value("type").toString();
+    if (type == "find_files" || type == "search_text")
+    {
+        return searchAction(action, path);
+    }
     if (type == "list_files")
     {
         QDir directory(path);
@@ -316,6 +568,10 @@ void TaskExecutor::runCommand(const QJsonObject &action)
                         {"program", action.value("program")},
                         {"arguments", action.value("arguments")},
                         {"success", false}};
+    emit activity(QStringLiteral("run_command: %1; arguments=%2; cwd=%3; таймаут=%4 с")
+                      .arg(action.value("program").toString(),
+                           QString::fromUtf8(QJsonDocument(action.value("arguments").toArray()).toJson(QJsonDocument::Compact)), directory)
+                      .arg(m_timeoutMs / 1000));
     if (directory.isEmpty() || !QFileInfo(directory).isDir() || action.value("program").toString().trimmed().isEmpty())
     {
         initial.insert("error", error.isEmpty() ? QStringLiteral("Нужны программа и существующий рабочий каталог.") : error);
@@ -323,23 +579,67 @@ void TaskExecutor::runCommand(const QJsonObject &action)
         scheduleNext();
         return;
     }
-    auto *process = new QProcess(this);
-    m_process = process;
-    process->setWorkingDirectory(directory);
-    process->setProcessChannelMode(QProcess::MergedChannels);
+    const auto program = action.value("program").toString();
+    auto executable = QStandardPaths::findExecutable(program);
+    if (executable.isEmpty())
+    {
+        const QFileInfo candidate(QDir(directory).absoluteFilePath(program));
+        if (candidate.isFile())
+        {
+            executable = candidate.absoluteFilePath();
+        }
+    }
+    if (executable.isEmpty())
+    {
+        initial.insert("error", QStringLiteral("Исполняемая программа не найдена. program должен содержать только имя или путь программы; "
+                                               "команда, ключи и shell-синтаксис передаются отдельно в arguments."));
+        initial.insert("exit_code", -1);
+        m_results.append(initial);
+        scheduleNext();
+        return;
+    }
     QStringList arguments;
     for (const auto &value : action.value("arguments").toArray())
     {
         arguments.append(value.toString());
     }
+    if (QFileInfo(executable).baseName().compare("cmd", Qt::CaseInsensitive) == 0)
+    {
+        bool command = false, keepOpen = false;
+        for (qsizetype i = 0; i < arguments.size(); ++i)
+        {
+            keepOpen |= arguments[i].compare("/k", Qt::CaseInsensitive) == 0;
+            command |= arguments[i].compare("/c", Qt::CaseInsensitive) == 0 && i + 1 < arguments.size() && !arguments[i + 1].trimmed().isEmpty();
+        }
+        if (!command || keepOpen)
+        {
+            initial.insert("error", QStringLiteral("cmd требует /C и команду; -C и интерактивный /K здесь не подходят. "
+                                                   "Для Ninja используйте program=ninja, arguments=[\"-C\",\"каталог_сборки\"]."));
+            initial.insert("exit_code", -1);
+            m_results.append(initial);
+            scheduleNext();
+            return;
+        }
+    }
+    auto *process = new QProcess(this);
+    m_process = process;
+    process->setWorkingDirectory(directory);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    process->setStandardInputFile(QProcess::nullDevice());
     auto *timer = new QTimer(process);
     timer->setSingleShot(true);
     connect(timer, &QTimer::timeout, process, [process]() {
         process->setProperty("timed_out", true);
         process->kill();
     });
-    connect(process, &QProcess::readyReadStandardOutput, this, [process]() {
-        auto output = process->property("output").toByteArray() + process->readAllStandardOutput();
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+        const auto chunk = process->readAllStandardOutput();
+        auto output = process->property("output").toByteArray() + chunk;
+        const auto message = QString::fromUtf8(chunk.right(2048)).trimmed();
+        if (!message.isEmpty())
+        {
+            emit activity(QStringLiteral("Вывод команды: %1").arg(message));
+        }
         if (output.size() > outputLimit)
         {
             output = output.right(outputLimit);
@@ -379,7 +679,7 @@ void TaskExecutor::runCommand(const QJsonObject &action)
                 process->deleteLater();
                 scheduleNext();
             });
-    process->start(action.value("program").toString(), arguments);
+    process->start(executable, arguments);
     timer->start(m_timeoutMs);
 }
 } // namespace orchestrator

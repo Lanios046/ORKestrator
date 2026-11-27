@@ -31,25 +31,11 @@ struct Configuration
 {
     QUrl baseUrl{QStringLiteral("http://127.0.0.1:51325/v1")};
     QString apiKey;
-    QString pmModel;
-    QString criticModel;
-    QString developerModel;
-    QString developerCriticModel;
-    QString censorModel;
-    QString researcherModel;
-    QString diagnosticianModel;
     QString workspace;
     int timeoutMs{1800000};
     int maxTokens{65536};
     int maxServiceTokens{8192};
     int maxReasoningCharacters{24000};
-    int maxPmTurns{10000};
-    int maxReviews{10000};
-    int maxAgentTurns{100000};
-    int commandTimeoutMs{1800000};
-    int maxResearchTurns{1000};
-    int maxDiagnosticTurns{1000};
-    int maxDiagnosticsPerStage{1000};
     bool structuredOutput{true};
     SamplingProfile samplingProfile{SamplingProfile::Auto};
     ReasoningMode reasoningMode{ReasoningMode::Auto};
@@ -88,6 +74,7 @@ class LmStudioClient final : public QObject
     QNetworkAccessManager m_network;
     QPointer<QNetworkReply> m_reply, m_metadataReply;
     QHash<QString, bool> m_reasoningCapabilities;
+    QHash<QString, QString> m_enabledReasoningEfforts;
     bool m_capabilitiesQueried{false};
     Configuration m_configuration;
     QByteArray m_received, m_streamBuffer;

@@ -169,7 +169,7 @@ class FakeLmStudioServer final : public QTcpServer
         responseHeaders += "Connection: close\r\n\r\n";
         if (splitTransport && !keepOpen)
         {
-            const auto unicode = response.indexOf(char(0xd0));
+            const auto unicode = response.indexOf('\xD0');
             const auto cut = unicode >= 0 ? unicode + 1 : qMin(qsizetype{17}, response.size());
             socket->write(responseHeaders + response.left(cut));
             QTimer::singleShot(5, socket, [socket, response, cut]() {
